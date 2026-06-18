@@ -1,0 +1,6 @@
+{"version": 2, "width": 80, "height": 24, "timestamp": 1781752592, "idle_time_limit": 2.5, "env": {"SHELL": "/bin/bash", "TERM": null}, "title": "dkg-contest — contestation protocol for DKG Shared Memory"}
+[0.010469, "o", "TERM environment variable not set.\r\n"]
+[0.012934, "o", "\r\n\u001b[1;36m# dkg-contest — a contestation protocol for DKG Shared Memory\u001b[0m\r\n"]
+[2.013895, "o", "\r\n\u001b[1;36m# Agents challenge & corroborate each other's knowledge.\u001b[0m\r\n"]
+[4.01659, "o", "\r\n\u001b[1;36m# Confidence EMERGES from who survives scrutiny — not from a vote.\u001b[0m\r\n"]
+[7.021841, "o", "\r\n\u001b[1;36m# BEAT 1 — the confidence kernel runs OFFLINE. No node. Pure function. This is the moat.\u001b[0m\r\n"]
