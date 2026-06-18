@@ -1,6 +1,6 @@
 # DESIGN.md — A Contestation Protocol for DKG Shared Memory
 
-**Status:** v2 — MVP core built and green (22 unit + 1 live-node integration test passing).
+**Status:** v2 — MVP core built and green (36 unit + 1 live-node integration test passing).
 **One line:** *A framework-agnostic contestation protocol for DKG Shared Memory — agents
 challenge and corroborate each other's knowledge assertions, and a confidence model turns
 multi-agent scrutiny into a real trust signal.*
@@ -102,15 +102,8 @@ Lifecycle in words: `claim shared → open for contestation → challenges/corro
 confidence recomputed on each new assertion → tier transitions per §2.2 → a settled claim can be
 reopened by a new challenge carrying fresh evidence (truth is revisable)`.
 
-**Open lifecycle questions (called out, not yet solved — for operator/Round-2):**
-- **TTL window.** Fixed duration vs. dynamic (importance-weighted)? MVP: no hard close — confidence
-  is always live and recomputed; "settle" is a snapshot, not a freeze.
-- **Re-opening settled claims.** A `consensus-verified` claim is **never frozen** (truth is
-  revisable), but to prevent churn (Risk #4) re-opening should cost the challenger a stake. MVP
-  carries the optional `ct:stake` field for exactly this; enforcement is deferred.
-- **Simultaneous / conflicting challenges.** The kernel is order-independent (pure function of the
-  assertion set), so concurrent challenges compose deterministically. Conflicting challenges both
-  count until rebutted; resolving *which* is correct is the contestation, not a tie-break we impose.
+*Lifecycle open questions (TTL, re-opening cost, simultaneous challenges, recursive rebuttal
+contestation) are collected in §7.*
 
 ### 1.4 Memory hierarchy ↔ trust gradient ↔ the spend boundary
 The DKG's own memory layers map cleanly onto the trust gradient, and that mapping is what makes the
@@ -169,9 +162,10 @@ parameter, not a magic number.
   citations cannot out-vote one strong on-chain fact (closes the evidence-flooding vector).
 - `indep(agent)` ∈ [0,1] — **diversity discount** (§2.2a). The anti-gaming core.
 - `rep(agent)` ∈ [0,1] — the agent's track record; EWMA over settled outcomes. **This is literally
-  the miner score.** Cold-start = `defaultRep` (neutral 0.5, *not* zero — see §2.2b).
-- `rebutted ∈ [0,1]` — `max(rebuttalStrength)` over author-rebuttals targeting that challenge. A
-  fully-rebutted challenge (1.0) contributes zero downward pressure **and** stops counting as open.
+  the miner score.** Cold-start = `defaultRep` (the self-attested floor 0.3, *not* neutral 0.5 — see §2.2b).
+- `rebutted ∈ [0,1]` — the **evidence-bounded** rebuttal level over author-rebuttals targeting that
+  challenge (see §2.2c). A fully-rebutted challenge (1.0) contributes zero downward pressure **and**
+  stops counting as open; a partially-rebutted one stays open and only partly attenuated.
 
 **Parameters & defaults** (frozen in `DEFAULT_PARAMS`; a subnet would govern these on-chain):
 
@@ -179,10 +173,10 @@ parameter, not a magic number.
 |---|---|---|
 | `c0` | 0.30 | self-attested floor; confidence of an uncontested claim |
 | `k` | 1.0 | logistic steepness (maturation speed) |
-| `endorsedAt` | 0.60 | confidence threshold for the endorsed tier |
-| `consensusAt` | 0.74 | threshold for consensus-verified (reachable by ~3 independent strong corroborators at neutral rep; pressure≈1.5→conf≈0.745) |
+| `endorsedAt` | 0.55 | confidence threshold for the endorsed tier (3 strong cold-start corroborators ≈0.595 clear it) |
+| `consensusAt` | 0.74 | threshold for consensus-verified — at the 0.3 cold-start, reachable only by agents who have EARNED reputation, not three strangers |
 | `consensusMinAgents` | 3 | min distinct independent corroborators for consensus |
-| `defaultRep` | 0.50 | cold-start reputation for an unseen agent |
+| `defaultRep` | 0.30 | cold-start reputation for an unseen agent (the self-attested floor) |
 | `w_kind` | OnChainFact 1.0, Replication 0.8, Measurement 0.6, Citation 0.4, Derivation 0.25 | evidence-kind weights |
 | `w_grounds` | Contradiction 1.0, MethodFlaw 0.8, StaleData 0.6, MissingEvidence 0.5 | challenge-grounds weights |
 | `coOccurrenceWindowMs` | 300000 | sybil co-occurrence window (5 min, §2.2a) |
@@ -214,11 +208,44 @@ corroborations always score 0 (no self-corroboration). This is the MVP's honest 
 hardening it (stake-weighting, graph-clustering, evidence provenance depth) is the subnet's core
 research problem (§5).
 
-### 2.2b Reputation bootstrapping — why cold-start is neutral, not zero
-New agents start at `defaultRep = 0.5`, not 0. Starting at zero hands incumbents a structural moat
-and punishes honest newcomers; sybil-resistance belongs in `indep()`, not in rep-suppression. The
-accepted cost: a fresh single agent has 0.5 influence on day one — but a sybil *swarm* sharing
-sources is crushed by the diversity discount regardless of rep. (Operator-confirmed, 2026-06-17.)
+### 2.2b Reputation bootstrapping — why cold-start is the self-attested floor (0.3), not neutral
+New agents start at `defaultRep = 0.3` — the same self-attested floor a fresh *claim* starts at —
+**not** neutral 0.5. The symmetry is the point: a new agent is itself "self-attested", unproven
+until its contestations survive settled outcomes, then it earns influence up via the reputation
+EWMA. Influence is earned by surviving scrutiny — identical to the thesis for claims. Starting at 0
+would hand incumbents a structural moat and punish honest newcomers; starting at 0.5 gives a fresh
+sybil real day-one influence while `indep()` is still being tuned. 0.3 is the low-regret middle:
+0.5-too-high risks false confidence (the credibility killer), 0.3-too-low is mild, recoverable
+newcomer friction. Sybil-resistance lives in `indep()`, not rep-suppression; a sybil *swarm* sharing
+sources is crushed by the diversity discount regardless of rep. Kept configurable (`defaultRep`) so
+the TAO-loop experiment can sweep it. (Operator-confirmed, 2026-06-17.)
+
+### 2.2c Rebuttal shape — and why `rebuttalStrength` is evidence-bounded
+A **Rebuttal** is a corroboration authored by the claim author that targets a specific challenge,
+carrying two extra fields:
+- `rebuts` — the challenge id it answers.
+- `rebuttalStrength ∈ [0,1]` — the author's DECLARED claim of how completely it addresses the
+  challenge's grounds.
+
+The declared strength is **not trusted on its own** — otherwise an author could neutralize any
+challenge by asserting `rebuttalStrength: 1` with a token reply, breaking the challenge-privileged
+asymmetry that is the heart of the model. So it is capped by the rebuttal's evidence strength
+relative to the challenge's grounds weight:
+
+```text
+evidenceCap       = min(1, bestRebuttalEvidenceWeight / challengeGroundsWeight)
+effectiveStrength = min(declaredStrength, evidenceCap)
+```
+
+Consequences:
+- A rebuttal with **no evidence** → cap 0 → cannot rebut at all (a bare "I answered" is worthless).
+- You **cannot** fully dismiss a `Contradiction` (grounds 1.0) with a `Citation` (evidence 0.4):
+  cap 0.4, so the challenge stays 60% in force and **remains open**.
+- An `OnChainFact` (1.0) fully answers even a Contradiction.
+
+A challenge stops counting as `open` only when some rebuttal reaches `effectiveStrength = 1`.
+*(Rebuttals are not yet themselves contestable — recursive challenge-of-a-rebuttal is a v0.2.0
+lifecycle item; see Open Questions.)*
 
 ### 2.3 Why this is subnet-ready (roadmap step 3)
 A Bittensor subnet needs a scalar per participant that rewards truth-seeking and resists gaming.
@@ -285,6 +312,17 @@ challenge-survival rate vs. eventual correctness.
   confidence kernel (§2.2) drops in as the reward function. Eyes open on gaming: the known attack
   is collusive mutual-corroboration → that's exactly what `indep()` is designed to suppress, and
   hardening it is the subnet's core research problem.
+- **The governing principle for any incentive layer: reward verifiable work, never consensus
+  agreement.** Rewarding "you agreed with the majority" builds a *conformity engine* — a token-fed
+  echo chamber that manufactures consensus-flavored falsehood. Rewarding "you falsified a claim that
+  reality later disproved" or "you checked evidence against a primary source and it held" builds a
+  *truth engine*. The incentive must point at verifiable contribution, not crowd-matching. This is
+  also what keeps validators converging (the Yuma-consensus problem): objective, evidence-anchored
+  resolution is the common thread. A subnet here is plausibly the answer to "why would anyone spend
+  resources contesting for free" (it pays for the production of a public good) — but note stake
+  *secures and disciplines* an external truth anchor, it does not *create* one; reality (or the §2.2a
+  evidence checker) still has to be the thing stakers bet toward, or you get a Keynesian beauty
+  contest on subjective truth.
 - **Round-2 Context-Oracle / ClaimReview hook:** the field's strongest PRs (#3, #16) tee up
   "Context Oracle / ClaimReview consumption." Our settled `(claim, confidence, tier, evidence
   graph)` **is** a ClaimReview-shaped record — we emit it in schema.org `ClaimReview` form so we're
@@ -294,8 +332,50 @@ challenge-survival rate vs. eventual correctness.
 
 ---
 
-## Open decisions for operator
-1. **Repo home** — your GitHub, or a new org? (Apache-2.0, npm-published, + registry PR.)
-2. **FLAGSHIP scope confirmed?** This design is sized for FLAGSHIP (8–10k TRAC). The MVP (§3) is
-   the floor; §2's diversity/reputation depth is what earns the flagship tier.
-3. **`ct:` ontology IRI / naming** — happy to align to an OriginTrail-preferred namespace.
+## 6. Limitations & threat model (what this does NOT yet do)
+
+Stated plainly, because knowing a system's edges is a credibility *gain*, not a confession:
+
+- **Evidence is self-asserted (the big one).** The confidence model produces trust from agents
+  *agreeing and disagreeing*; it does **not** verify the evidence is real. An agent citing
+  `OnChainFact` evidence `tx:0x…` is weighted highly, but nothing yet confirms the transaction
+  actually says what the agent claims. The diversity discount stops a sybil *swarm*; it does **not**
+  stop one sophisticated liar citing plausible-but-fabricated evidence.
+- **What the DKG verifies vs. what it doesn't.** The DKG guarantees *integrity* (sealed,
+  tamper-evident), *provenance* (who/when), and *availability* — for free, and we lean on it. It does
+  **not** verify *truth*: it is designed to hold "A says X" and "B says not-X" simultaneously.
+  Truth-via-DKG would be circular (accepted → published → cited as evidence → accepted), an echo
+  chamber. Truth must be anchored to something *external* to the assertion graph — a primary-source
+  check or stake. That anchor is the **v0.2.0 evidence checker** (§2.2a "oracle-lite": actually read
+  the chain state, don't trust the assertion *about* it) and, later, the subnet.
+- **Coherentist now, foundationalist later.** Contestation is an *internal* mechanism (agents
+  checking each other) and can converge on a coherent set of falsehoods. The evidence checker is the
+  foundationalist anchor that grounds it. This is a *correctly layered* design — integrity (DKG,
+  free) + coherentist scrutiny (this protocol) + foundationalist anchor (v0.2.0 oracle) — not a hole.
+- **Cheap honest sliver available now:** evidence *integrity* (content-hash match) + *availability*
+  (source resolves), which filters fabricated sources without pretending to do semantic verification.
+  Deferred to v0.2.0 alongside the DKG-native-evidence provenance multiplier (sealed KA/UAL → higher
+  weight; raw agent-typed string → lower) — source trust-scoring done non-circularly.
+
+---
+
+## 7. Open questions (lifecycle — called out, not yet solved)
+
+- **TTL window.** Fixed duration vs. dynamic (importance-weighted)? MVP: no hard close — confidence
+  is always live; "settle" is a snapshot, not a freeze.
+- **Re-opening settled claims.** A `consensus-verified` claim is never frozen (truth is revisable),
+  but to prevent churn, re-opening should cost the challenger a stake. The optional `ct:stake` field
+  exists for this; enforcement is deferred.
+- **Simultaneous / conflicting challenges.** The kernel is order-independent (pure over the assertion
+  set), so concurrent challenges compose deterministically; conflicting challenges both count until
+  rebutted. Resolving *which* is correct is the contestation, not a tie-break we impose.
+- **Recursive contestation of rebuttals.** A rebuttal is currently evidence-bounded (§2.2c) but not
+  itself challengeable. Making rebuttals first-class contestable assertions is a v0.2.0 item.
+
+---
+
+## Resolved decisions
+- **Repo home:** `github.com/iteotwawki/dkg-contestation` (Apache-2.0, npm `@iteotwawki/dkg-contestation`).
+- **Scope:** FLAGSHIP (8–10k TRAC) — §2's diversity/reputation depth earns the tier.
+- **`ct:` ontology IRI:** `https://contestation.dkg/ontology#` (operator-confirmed; open to an
+  OriginTrail-aligned namespace if the committee prefers).

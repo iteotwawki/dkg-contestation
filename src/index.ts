@@ -27,10 +27,13 @@ export type {
   ContestationGraph,
   Verdict,
   AgentReputation,
+  ContributionLine,
+  ConfidenceExplanation,
 } from './types.js';
 
 export {
   computeConfidence,
+  explainConfidence,
   classifyTier,
   logistic,
   clamp01,

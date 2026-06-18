@@ -27,7 +27,9 @@ import {
 import type {
   AgentReputation,
   Challenge,
+  ConfidenceExplanation,
   ContestationGraph,
+  ContributionLine,
   Corroboration,
   Evidence,
   Verdict,
@@ -79,7 +81,11 @@ export const DEFAULT_PARAMS: ConfidenceParams = {
     [ChallengeGrounds.MissingEvidence]: 0.5,
   },
   k: 1.0,
-  endorsedAt: 0.6,
+  // endorsed at 0.55: three independent strong (on-chain) corroborators at the
+  // 0.3 cold-start floor land at ~0.595, comfortably clearing this line — that's
+  // exactly what the endorsed tier is for. A single corroborator (~0.40) stays
+  // self-attested. Recalibrated from 0.60 when cold-start dropped 0.5→0.3.
+  endorsedAt: 0.55,
   // consensus sits at 0.74 — reachable by ~3 independent strong-evidence
   // corroborators at neutral reputation (pressure≈1.5 → conf≈0.745), yet still
   // well clear of the endorsed line. A higher-reputation cohort clears it
@@ -87,7 +93,15 @@ export const DEFAULT_PARAMS: ConfidenceParams = {
   // later govern on-chain (DESIGN.md §2.2).
   consensusAt: 0.74,
   consensusMinAgents: 3,
-  defaultRep: 0.5,
+  // Cold-start at the self-attested floor (0.3), NOT neutral 0.5: a fresh agent
+  // is itself "self-attested" — unproven until its contestations survive outcomes,
+  // then it earns influence up via the reputation EWMA. This mirrors the claim
+  // trust gradient (influence is earned by surviving scrutiny) and is the
+  // low-regret choice: 0.5-too-high gives a fresh sybil real day-one influence
+  // while indep() is still being tuned (false confidence — the credibility killer),
+  // whereas 0.3-too-low is mild, recoverable newcomer friction. Configurable so
+  // the TAO-loop experiment can sweep it. (Operator-confirmed, 2026-06-17.)
+  defaultRep: 0.3,
   // 5-minute co-occurrence window: independent agents researching the same
   // claim rarely publish within 5 min citing identical sources; a swarm does.
   coOccurrenceWindowMs: 5 * 60_000,
@@ -164,8 +178,15 @@ function diversityFactor(
   createdAt: string,
   priors: PriorAssertion[],
   params: ConfidenceParams,
+  /**
+   * When false (corroborations): the claim author scores 0 — no self-boost, the
+   * core anti-gaming guard. When true (challenges): the author IS allowed, so a
+   * self-challenge acts as a full-weight retraction (an author disavowing their
+   * own claim is a strong negative signal, not something to neutralize).
+   */
+  selfAllowed = false,
 ): number {
-  if (actor.toLowerCase() === claimAuthor.toLowerCase()) return 0;
+  if (!selfAllowed && actor.toLowerCase() === claimAuthor.toLowerCase()) return 0;
   if (evidence.length === 0) return 0.5; // assertion with no evidence is weak but non-zero
 
   const sources = new Set(evidence.map((e) => e.source));
@@ -201,17 +222,41 @@ function repOf(
 
 /**
  * A challenge is "rebutted" to the degree the claim author answered its grounds.
- * Returns the max rebuttalStrength among rebuttals targeting this challenge.
+ *
+ * The author DECLARES a `rebuttalStrength ∈ [0,1]`, but that declaration alone is
+ * not trusted — otherwise an author could neutralize any challenge by asserting
+ * `rebuttalStrength: 1` with a token rebuttal, breaking the challenge-privileged
+ * asymmetry. So the declared strength is CAPPED by how strong the rebuttal's
+ * evidence is relative to the challenge's grounds:
+ *
+ *   evidenceCap      = min(1, bestRebuttalEvidenceWeight / challengeGroundsWeight)
+ *   effectiveStrength = min(declaredStrength, evidenceCap)
+ *
+ * Consequences:
+ *   - A rebuttal with NO evidence → cap 0 → cannot rebut at all (bare "I answered").
+ *   - You cannot fully dismiss a Contradiction (grounds 1.0) with a Citation
+ *     (evidence 0.4) — cap 0.4, so the challenge stays 60% in force and OPEN.
+ *   - An OnChainFact (1.0) fully answers even a Contradiction.
+ *
+ * Returns the max effective rebuttal strength among rebuttals targeting this
+ * challenge.
  */
 function rebuttalLevel(
   challenge: Challenge,
   corroborations: Corroboration[],
+  params: ConfidenceParams,
 ): number {
+  const groundsWeight = params.wGrounds[challenge.groundsType] ?? 0.5;
   let level = 0;
   for (const c of corroborations) {
-    if (c.rebuts === challenge.id) {
-      level = Math.max(level, clamp01(c.rebuttalStrength ?? 1));
-    }
+    if (c.rebuts !== challenge.id) continue;
+    const declared = clamp01(c.rebuttalStrength ?? 1);
+    const evidenceWeight = bestEvidenceWeight(c.evidence, params.wKind);
+    const evidenceCap = groundsWeight > 0
+      ? Math.min(1, evidenceWeight / groundsWeight)
+      : 1;
+    const effective = Math.min(declared, evidenceCap);
+    if (effective > level) level = effective;
   }
   return level;
 }
@@ -228,6 +273,20 @@ export function computeConfidence(
   reps: Map<string, AgentReputation> = new Map(),
   params: ConfidenceParams = DEFAULT_PARAMS,
 ): Verdict {
+  return explainConfidence(graph, reps, params).verdict;
+}
+
+/**
+ * Like computeConfidence, but ALSO returns a per-assertion contribution
+ * breakdown — why a claim has the confidence it does. Same math, one source of
+ * truth: computeConfidence is this function projected to its `verdict`. Use for
+ * debugging, the TAO-loop demo logging, and a future subnet's auditability.
+ */
+export function explainConfidence(
+  graph: ContestationGraph,
+  reps: Map<string, AgentReputation> = new Map(),
+  params: ConfidenceParams = DEFAULT_PARAMS,
+): ConfidenceExplanation {
   const { claim, challenges, corroborations } = graph;
   // Separate diversity trackers: a challenger reinterpreting the same on-chain
   // fact a corroborator cited is legitimate adversarial reuse, NOT sybil
@@ -235,6 +294,7 @@ export function computeConfidence(
   // the challenge cohort, never across them.
   const corroboratorPriors: PriorAssertion[] = [];
   const challengerPriors: PriorAssertion[] = [];
+  const lines: ContributionLine[] = [];
 
   let pressure = 0;
   const countedCorroborators = new Set<string>();
@@ -253,12 +313,16 @@ export function computeConfidence(
       pressure += contribution;
       countedCorroborators.add(c.corroborator.toLowerCase());
     }
+    lines.push({
+      id: c.id, role: 'corroboration', agent: c.corroborator,
+      weight: wKind, indep, rep, rebutted: 0, contribution,
+    });
   }
 
   // Open challenges pull confidence down, attenuated by how well rebutted.
   let openChallenges = 0;
   for (const ch of challenges) {
-    const rebutted = rebuttalLevel(ch, corroborations);
+    const rebutted = rebuttalLevel(ch, corroborations, params);
     if (rebutted < 1) openChallenges += 1;
     const wGrounds = params.wGrounds[ch.groundsType] ?? 0.5;
     // A challenge's force scales with its evidence too (a bare assertion of
@@ -267,10 +331,15 @@ export function computeConfidence(
       ? bestEvidenceWeight(ch.evidence, params.wKind)
       : 0.5;
     const indep = diversityFactor(
-      ch.challenger, claim.author, ch.evidence, ch.createdAt, challengerPriors, params,
+      ch.challenger, claim.author, ch.evidence, ch.createdAt, challengerPriors, params, true,
     );
     const rep = repOf(ch.challenger, reps, params.defaultRep);
-    pressure -= wGrounds * evWeight * indep * rep * (1 - rebutted);
+    const contribution = -(wGrounds * evWeight * indep * rep * (1 - rebutted));
+    pressure += contribution;
+    lines.push({
+      id: ch.id, role: 'challenge', agent: ch.challenger,
+      weight: wGrounds * evWeight, indep, rep, rebutted, contribution,
+    });
   }
 
   // c0-anchored squash: zero pressure → exactly c0; net support → toward 1;
@@ -291,7 +360,7 @@ export function computeConfidence(
     params,
   );
 
-  return {
+  const verdict: Verdict = {
     claimId: claim.id,
     score,
     confidence,
@@ -299,6 +368,8 @@ export function computeConfidence(
     independentCorroborators,
     openChallenges,
   };
+
+  return { verdict, c0: params.c0, pressure, lines };
 }
 
 export function classifyTier(

@@ -103,3 +103,34 @@ export interface AgentReputation {
   /** Count of settled assertions that fed the EWMA. */
   samples: number;
 }
+
+/** One assertion's contribution to the confidence pressure (observability). */
+export interface ContributionLine {
+  /** Assertion id. */
+  id: string;
+  /** 'corroboration' | 'challenge'. */
+  role: 'corroboration' | 'challenge';
+  /** The agent (corroborator or challenger). */
+  agent: string;
+  /** Evidence/grounds weight applied (max evidence weight, or grounds weight). */
+  weight: number;
+  /** Diversity discount indep() ∈ [0,1] actually applied. */
+  indep: number;
+  /** Reputation rep() ∈ [0,1] actually applied. */
+  rep: number;
+  /** For challenges: effective rebuttal level ∈ [0,1] (0 for corroborations). */
+  rebutted: number;
+  /** Signed contribution to pressure (+ for support, − for challenge). */
+  contribution: number;
+}
+
+/** Full breakdown of why a claim has its confidence (observability / debug). */
+export interface ConfidenceExplanation {
+  verdict: Verdict;
+  /** c0 anchor the pressure squashes around. */
+  c0: number;
+  /** Net pressure = Σ contributions. */
+  pressure: number;
+  /** Per-assertion contribution lines, in processing order. */
+  lines: ContributionLine[];
+}

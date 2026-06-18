@@ -138,6 +138,19 @@ async function cmdDemo(): Promise<void> {
   const final = await engine.settle(claim.id);
   process.stdout.write('\n');
   log('5. settled', final);
+
+  // Observability: show WHY the claim has its score — per-assertion breakdown.
+  const ex = engine.explain(claim.id);
+  process.stdout.write(`\n# breakdown (c0=${ex.c0}  pressure=${ex.pressure.toFixed(3)}):\n`);
+  for (const l of ex.lines) {
+    const sign = l.contribution >= 0 ? '+' : '';
+    process.stdout.write(
+      `#   ${l.role.padEnd(13)} ${l.agent.padEnd(18)} ` +
+        `weight=${l.weight.toFixed(2)} indep=${l.indep.toFixed(2)} rep=${l.rep.toFixed(2)}` +
+        (l.role === 'challenge' ? ` rebutted=${l.rebutted.toFixed(2)}` : '') +
+        `  → ${sign}${l.contribution.toFixed(3)}\n`,
+    );
+  }
   process.stdout.write(`\n# claim id: ${claim.id}\n`);
 }
 

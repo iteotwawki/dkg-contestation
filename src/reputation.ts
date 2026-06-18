@@ -31,7 +31,11 @@ export interface ReputationParams {
 
 export const DEFAULT_REPUTATION_PARAMS: ReputationParams = {
   alpha: 0.2,
-  initialRep: 0.5,
+  // Aligned with ConfidenceParams.defaultRep (0.3): a fresh agent starts at the
+  // self-attested floor and earns influence up via settled outcomes. Keep these
+  // two in sync — the kernel reads defaultRep for unseen agents, the ledger seeds
+  // initialRep for agents it starts tracking.
+  initialRep: 0.3,
 };
 
 export class ReputationLedger {

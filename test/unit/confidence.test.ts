@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeConfidence,
+  explainConfidence,
   classifyTier,
   clamp01,
   logistic,
@@ -116,7 +117,12 @@ describe('confidence kernel — corroboration raises confidence', () => {
     expect(withOnChain.confidence).toBeGreaterThan(withCitation.confidence);
   });
 
-  it('multiple independent corroborators reach consensus-verified', () => {
+  it('three COLD-START corroborators reach endorsed but NOT consensus-verified', () => {
+    // With cold-start rep at the self-attested floor (0.3), three unknown agents
+    // with strong evidence corroborate — enough to be endorsed, but deliberately
+    // NOT enough for consensus-verified. Consensus should require PROVEN agents,
+    // not three strangers (operator review: cold-start makes consensus harder —
+    // that is the intended, conservative behaviour).
     const g = graph({
       corroborations: [
         corro({ corroborator: AGENT_B, evidence: [ev('e1', EvidenceKind.OnChainFact, 's1')] }),
@@ -125,6 +131,26 @@ describe('confidence kernel — corroboration raises confidence', () => {
       ],
     });
     const v = computeConfidence(g);
+    expect(v.independentCorroborators).toBe(3);
+    expect(v.tier).toBe(ConfidenceTier.Endorsed);
+  });
+
+  it('three ESTABLISHED (earned-rep) corroborators reach consensus-verified', () => {
+    // The same three agents, but each has earned a strong reputation through past
+    // settled outcomes. Now their agreement carries consensus weight.
+    const reps = new Map([
+      [AGENT_B.toLowerCase(), { agent: AGENT_B, rep: 0.9, samples: 20 }],
+      [AGENT_C.toLowerCase(), { agent: AGENT_C, rep: 0.9, samples: 20 }],
+      [AGENT_D.toLowerCase(), { agent: AGENT_D, rep: 0.9, samples: 20 }],
+    ]);
+    const g = graph({
+      corroborations: [
+        corro({ corroborator: AGENT_B, evidence: [ev('e1', EvidenceKind.OnChainFact, 's1')] }),
+        corro({ corroborator: AGENT_C, evidence: [ev('e2', EvidenceKind.OnChainFact, 's2')] }),
+        corro({ corroborator: AGENT_D, evidence: [ev('e3', EvidenceKind.OnChainFact, 's3')] }),
+      ],
+    });
+    const v = computeConfidence(g, reps);
     expect(v.independentCorroborators).toBe(3);
     expect(v.tier).toBe(ConfidenceTier.ConsensusVerified);
   });
@@ -142,18 +168,63 @@ describe('confidence kernel — challenge lowers confidence', () => {
   });
 
   it('a fully rebutted challenge stops counting as open', () => {
+    // The challenge is a Contradiction (grounds weight 1.0); to FULLY rebut it the
+    // author's rebuttal must carry evidence at least as strong (OnChainFact 1.0).
     const challenge = chal({ challenger: AGENT_B, evidence: [ev('e', EvidenceKind.Measurement, 's1')] });
     const g = graph({
       challenges: [challenge],
       corroborations: [
-        // author rebuts their own claim, fully
-        corro({ corroborator: AUTHOR, rebuts: challenge.id, rebuttalStrength: 1 }),
+        // author rebuts their own claim, fully, with strong (OnChainFact) evidence
+        corro({ corroborator: AUTHOR, rebuts: challenge.id, rebuttalStrength: 1,
+          evidence: [ev('er', EvidenceKind.OnChainFact, 'sr')] }),
         // plus an independent corroboration to clear the endorsed bar
         corro({ corroborator: AGENT_C, evidence: [ev('e2', EvidenceKind.OnChainFact, 's2')] }),
       ],
     });
     const v = computeConfidence(g);
     expect(v.openChallenges).toBe(0);
+  });
+
+  it('a bare (no-evidence) rebuttal CANNOT close a challenge — the self-rebuttal hole', () => {
+    // Author declares rebuttalStrength: 1 but attaches no evidence. Under the
+    // evidence-bounded rule this caps at 0, so the challenge stays open. This is
+    // the exact gaming vector the bound closes.
+    const challenge = chal({ challenger: AGENT_B, groundsType: ChallengeGrounds.Contradiction,
+      evidence: [ev('e', EvidenceKind.OnChainFact, 's1')] });
+    const g = graph({
+      challenges: [challenge],
+      corroborations: [
+        corro({ corroborator: AUTHOR, rebuts: challenge.id, rebuttalStrength: 1 }), // no evidence
+      ],
+    });
+    expect(computeConfidence(g).openChallenges).toBe(1);
+  });
+
+  it('a weak rebuttal cannot fully dismiss a strong challenge (partial rebuttal stays open)', () => {
+    // A Citation (0.4) rebuttal against a Contradiction (1.0) caps effective
+    // strength at 0.4 — the challenge is attenuated but remains open (<1).
+    const challenge = chal({ challenger: AGENT_B, groundsType: ChallengeGrounds.Contradiction,
+      evidence: [ev('e', EvidenceKind.OnChainFact, 's1')] });
+    const weak = graph({
+      challenges: [challenge],
+      corroborations: [
+        corro({ corroborator: AUTHOR, rebuts: challenge.id, rebuttalStrength: 1,
+          evidence: [ev('er', EvidenceKind.Citation, 'sr')] }),
+      ],
+    });
+    const strong = graph({
+      challenges: [challenge],
+      corroborations: [
+        corro({ corroborator: AUTHOR, rebuts: challenge.id, rebuttalStrength: 1,
+          evidence: [ev('er', EvidenceKind.OnChainFact, 'sr')] }),
+      ],
+    });
+    expect(computeConfidence(weak).openChallenges).toBe(1);   // weak rebuttal: still open
+    expect(computeConfidence(strong).openChallenges).toBe(0); // strong rebuttal: closed
+    // and the weak rebuttal should still lift confidence above the fully-open case
+    expect(computeConfidence(weak).confidence).toBeGreaterThan(
+      computeConfidence(graph({ challenges: [challenge] })).confidence,
+    );
   });
 });
 
@@ -165,6 +236,17 @@ describe('anti-gaming — the diversity discount indep()', () => {
     const v = computeConfidence(g);
     expect(v.confidence).toBeCloseTo(DEFAULT_PARAMS.c0);
     expect(v.independentCorroborators).toBe(0);
+  });
+
+  it('self-CHALLENGE counts at full weight (retraction), unlike self-corroboration', () => {
+    // The author disavowing their own claim is a strong negative signal — it must
+    // NOT be neutralized the way self-corroboration is. A self-challenge with
+    // evidence should push confidence below the floor and stay open.
+    const selfChallenge = chal({ challenger: AUTHOR, groundsType: ChallengeGrounds.Contradiction,
+      evidence: [ev('e', EvidenceKind.OnChainFact, 's1')] });
+    const v = computeConfidence(graph({ challenges: [selfChallenge] }));
+    expect(v.openChallenges).toBe(1);
+    expect(v.confidence).toBeLessThan(DEFAULT_PARAMS.c0);
   });
 
   it('recycled evidence source is discounted vs a fresh source', () => {
@@ -280,6 +362,45 @@ describe('classifyTier thresholds', () => {
     expect(classifyTier(0.65, 1, 1)).toBe(ConfidenceTier.SelfAttested); // open challenge blocks
     expect(classifyTier(0.85, 3, 0)).toBe(ConfidenceTier.ConsensusVerified);
     expect(classifyTier(0.85, 2, 0)).toBe(ConfidenceTier.Endorsed); // not enough agents
+  });
+});
+
+describe('explainConfidence — observability', () => {
+  it('contribution lines sum to pressure, and verdict matches computeConfidence', () => {
+    const g = graph({
+      corroborations: [
+        corro({ corroborator: AGENT_B, evidence: [ev('e1', EvidenceKind.OnChainFact, 's1')] }),
+        corro({ corroborator: AGENT_C, evidence: [ev('e2', EvidenceKind.Measurement, 's2')] }),
+      ],
+      challenges: [
+        chal({ challenger: AGENT_D, groundsType: ChallengeGrounds.StaleData,
+          evidence: [ev('e3', EvidenceKind.Citation, 's3')] }),
+      ],
+    });
+    const ex = explainConfidence(g);
+    // verdict is identical to computeConfidence (one source of truth)
+    expect(ex.verdict).toEqual(computeConfidence(g));
+    // lines reconcile: Σ contribution === pressure
+    const summed = ex.lines.reduce((acc, l) => acc + l.contribution, 0);
+    expect(summed).toBeCloseTo(ex.pressure, 10);
+    // and score === c0 + pressure
+    expect(ex.verdict.score).toBeCloseTo(ex.c0 + ex.pressure, 10);
+    // one line per non-rebuttal assertion
+    expect(ex.lines.filter((l) => l.role === 'corroboration')).toHaveLength(2);
+    expect(ex.lines.filter((l) => l.role === 'challenge')).toHaveLength(1);
+  });
+
+  it('exposes the indep discount per line so sybil suppression is observable', () => {
+    // Two corroborators sharing a source — the second's line should show a
+    // visibly reduced indep, which is the whole point of the breakdown.
+    const g = graph({
+      corroborations: [
+        corro({ corroborator: AGENT_B, evidence: [ev('e1', EvidenceKind.OnChainFact, 'shared')] }),
+        corro({ corroborator: AGENT_C, evidence: [ev('e2', EvidenceKind.OnChainFact, 'shared')] }),
+      ],
+    });
+    const lines = explainConfidence(g).lines;
+    expect(lines[0].indep).toBeGreaterThan(lines[1].indep); // recycled source discounted
   });
 });
 

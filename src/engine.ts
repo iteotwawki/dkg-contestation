@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   computeConfidence,
+  explainConfidence,
   DEFAULT_PARAMS,
   type ConfidenceParams,
 } from './confidence.js';
@@ -33,6 +34,7 @@ import type {
   Corroboration,
   Evidence,
   Verdict,
+  ConfidenceExplanation,
 } from './types.js';
 import type {
   ChallengeGrounds,
@@ -204,6 +206,16 @@ export class ContestationEngine {
   confidence(claimId: string): Verdict {
     const graph = this.requireGraph(claimId);
     return computeConfidence(graph, this.reputation.view(), this.params);
+  }
+
+  /**
+   * Confidence verdict PLUS a per-assertion contribution breakdown — why the
+   * claim has its current score. Observability for debugging and the TAO-loop
+   * demo. Same math as confidence(); this just also returns the breakdown.
+   */
+  explain(claimId: string): ConfidenceExplanation {
+    const graph = this.requireGraph(claimId);
+    return explainConfidence(graph, this.reputation.view(), this.params);
   }
 
   /** The full contestation graph around a claim. */

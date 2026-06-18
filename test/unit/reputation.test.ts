@@ -24,29 +24,29 @@ function verdict(tier: ConfidenceTier, openChallenges: number): Verdict {
 }
 
 describe('ReputationLedger', () => {
-  it('new agents start at the initial rep', () => {
+  it('new agents start at the initial rep (self-attested floor, 0.3)', () => {
     const led = new ReputationLedger();
-    expect(led.get('0xNew').rep).toBeCloseTo(0.5);
+    expect(led.get('0xNew').rep).toBeCloseTo(0.3);
     expect(led.get('0xNew').samples).toBe(0);
   });
 
   it('rewards a corroborator when their claim survives', () => {
     const led = new ReputationLedger();
     led.settle(settledGraph(), verdict(ConfidenceTier.ConsensusVerified, 0));
-    expect(led.get(GOOD).rep).toBeGreaterThan(0.5);
+    expect(led.get(GOOD).rep).toBeGreaterThan(0.3); // rose above the cold-start floor
     expect(led.get(GOOD).samples).toBe(1);
   });
 
   it('penalises a challenger when the claim they attacked survives', () => {
     const led = new ReputationLedger();
     led.settle(settledGraph(), verdict(ConfidenceTier.Endorsed, 0));
-    expect(led.get(BAD).rep).toBeLessThan(0.5);
+    expect(led.get(BAD).rep).toBeLessThan(0.3); // pulled below the cold-start floor
   });
 
   it('rewards a challenger when the claim collapses', () => {
     const led = new ReputationLedger();
     led.settle(settledGraph(), verdict(ConfidenceTier.SelfAttested, 1));
-    expect(led.get(BAD).rep).toBeGreaterThan(0.5);
+    expect(led.get(BAD).rep).toBeGreaterThan(0.3); // rose above the cold-start floor
   });
 
   it('EWMA converges toward 1 under repeated wins', () => {
