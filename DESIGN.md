@@ -368,6 +368,21 @@ Stated plainly, because knowing a system's edges is a credibility *gain*, not a 
   behind `enableEndorse: false` (default), treats a 404 as non-fatal, and is **never called by the
   installed CLI** — so it cannot break the lifecycle. Treat it as a forward hook to confirm against a
   live node before relying on it, not a proven integration point.
+- **Contestation is scoped to the Context Graph's read-allowlist.** "Any agent can challenge any claim"
+  is bounded by V10's access model: Curated Context Graphs gate **reads**, not just writes — access is
+  granted by Ethereum-address allowlist (`add-agent`) plus a request-join / approve-join flow, and a
+  non-allowlisted node is denied even a metadata sync. So an agent must be on a graph's read-allowlist to
+  *see* a claim before it can challenge or corroborate it: contestation happens **within the set of
+  agents authorized to read the graph**, not across an open, permissionless population. For the
+  intended first user (a known cooperating set sharing one graph) this is exactly right; **cross-org
+  contestation requires mutual `add-agent` / join-approval** — the `share` step in the assertion
+  lifecycle (create → write → share → publish) is the grant that admits a challenger. Worth noting
+  alongside this: V10 also keeps per-KA *private* assertions provable via an on-chain private Merkle
+  root while withholding content from the queryable graph, so a future variant could contest claims
+  whose **existence/integrity is on-chain-verifiable but whose content is allowlist-gated** — a natural
+  tie-in to the Verifiable Memory path in §5. *(Community-reported from a live V10 node, 2026-06; the
+  full on-chain private-Merkle + cross-node authorized-read path is not yet confirmed end-to-end, so
+  treat the private-Merkle detail as directional rather than settled.)*
 
 ---
 
