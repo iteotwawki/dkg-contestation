@@ -1,0 +1,32 @@
+{
+  "claim": {
+    "id": "claim:demo-1",
+    "statement": "Subnet 15 emissions favor early validators in epoch boundaries.",
+    "author": "0xMiner",
+    "createdAt": "2026-06-18T00:00:00Z"
+  },
+  "challenges": [
+    {
+      "id": "chal:1",
+      "targets": "claim:demo-1",
+      "challenger": "0xSkeptic",
+      "groundsType": "Contradiction",
+      "evidence": [
+        { "id": "ev:c", "kind": "OnChainFact", "source": "tx:0xbeef", "hash": "h:c" }
+      ],
+      "createdAt": "2026-06-18T00:10:00Z"
+    }
+  ],
+  "corroborations": [
+    {
+      "id": "corr:1",
+      "supports": "claim:demo-1",
+      "corroborator": "0xAdvisorJanus",
+      "independence": "IndependentSource",
+      "evidence": [
+        { "id": "ev:a", "kind": "OnChainFact", "source": "tx:0xfeed", "hash": "h:a" }
+      ],
+      "createdAt": "2026-06-18T00:05:00Z"
+    }
+  ]
+}

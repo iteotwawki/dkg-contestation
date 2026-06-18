@@ -1,0 +1,10 @@
+{
+  "claim": {
+    "id": "claim:demo-1",
+    "statement": "Subnet 15 emissions favor early validators in epoch boundaries.",
+    "author": "0xMiner",
+    "createdAt": "2026-06-18T00:00:00Z"
+  },
+  "challenges": [],
+  "corroborations": []
+}

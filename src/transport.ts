@@ -79,9 +79,29 @@ export class HttpDkgTransport implements DkgTransport {
 
   constructor(opts: HttpDkgTransportOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? 'http://127.0.0.1:9200').replace(/\/$/, '');
-    this.token = opts.authToken ?? HttpDkgTransport.discoverToken(opts.dkgHome);
+    // Sanitize whichever source we use: an explicit authToken can arrive carrying
+    // the auth.token comment line (e.g. DKG_AUTH_TOKEN=$(cat auth.token)), whose
+    // em-dash would otherwise poison the HTTP header with a ByteString error.
+    this.token = HttpDkgTransport.sanitizeToken(
+      opts.authToken ?? HttpDkgTransport.discoverToken(opts.dkgHome),
+    );
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+  }
+
+  /**
+   * Normalize a token that may carry the auth.token comment line or stray
+   * whitespace/newlines. Returns the last non-comment, non-blank line, which is
+   * the bare token — preventing the comment's em-dash from poisoning the header.
+   */
+  static sanitizeToken(raw: string): string {
+    const token = raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'))
+      .at(-1);
+    if (!token) throw new Error('auth token was empty after stripping comments.');
+    return token;
   }
 
   /**
@@ -95,13 +115,7 @@ export class HttpDkgTransport implements DkgTransport {
       throw new Error('No authToken and no DKG_HOME to discover auth.token from.');
     }
     const raw = readFileSync(join(home, 'auth.token'), 'utf8');
-    const lines = raw
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith('#'));
-    const token = lines.at(-1);
-    if (!token) throw new Error(`auth.token at ${home} had no token line.`);
-    return token;
+    return HttpDkgTransport.sanitizeToken(raw);
   }
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<{ status: number; body: T }> {
