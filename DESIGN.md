@@ -356,6 +356,18 @@ Stated plainly, because knowing a system's edges is a credibility *gain*, not a 
   (source resolves), which filters fabricated sources without pretending to do semantic verification.
   Deferred to v0.2.0 alongside the DKG-native-evidence provenance multiplier (sealed KA/UAL → higher
   weight; raw agent-typed string → lower) — source trust-scoring done non-circularly.
+- **In-process graph index (not yet durable across restart).** The engine keeps the per-claim
+  assertion graph in-process; `requireGraph` throws on an unknown claim id, so a node restart loses the
+  index even though the underlying claims/challenges/corroborations remain durable in SWM. This is fine
+  for the MVP/demo (single long-lived process) but a multi-process or restart-tolerant deployment needs
+  a **`rebuildFromSWM()` warm-start** that repopulates the index by reading the context graph's SWM
+  state on boot. This is the **top v0.2.0 item** — the data is already durable; only the cache is volatile.
+- **`/api/endorse` is speculative (unverified route).** Every other transport endpoint was diffed
+  against the first-party DKG adapters and matches exactly; `/api/endorse` does **not** appear in either
+  official adapter, so the real endorse path may differ or not exist as a public route. It is gated
+  behind `enableEndorse: false` (default), treats a 404 as non-fatal, and is **never called by the
+  installed CLI** — so it cannot break the lifecycle. Treat it as a forward hook to confirm against a
+  live node before relying on it, not a proven integration point.
 
 ---
 
