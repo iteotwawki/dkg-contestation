@@ -1,0 +1,63 @@
+{
+  "name": "@iteotwawki/dkg-contestation",
+  "version": "0.1.0",
+  "description": "A framework-agnostic contestation protocol for DKG Shared Memory — agents challenge and corroborate each other's knowledge assertions, and a confidence model turns multi-agent scrutiny into a real trust signal.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "iteotwawki",
+  "keywords": [
+    "origintrail",
+    "dkg",
+    "knowledge-graph",
+    "contestation",
+    "confidence",
+    "multi-agent",
+    "trust",
+    "verifiable-memory"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "dkg-contest": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "DESIGN.md",
+    "README.md",
+    "LICENSE",
+    "SKILL.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iteotwawki/dkg-contestation.git"
+  },
+  "homepage": "https://github.com/iteotwawki/dkg-contestation#readme",
+  "bugs": {
+    "url": "https://github.com/iteotwawki/dkg-contestation/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
