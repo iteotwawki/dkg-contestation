@@ -386,6 +386,19 @@ Stated plainly, because knowing a system's edges is a credibility *gain*, not a 
 
 ---
 
+## 8. Maintenance commitment
+
+- **Maintainer:** [@iteotwawki](https://github.com/iteotwawki) (GitHub), via the project's issue
+  tracker at `github.com/iteotwawki/dkg-contestation/issues`.
+- **Support window:** at least **6 months** post-acceptance — bug triage, dependency/security
+  patching, and compatibility updates as the DKG v10 public HTTP interface evolves through the
+  rc → stable line.
+- **Scope of support:** the published npm package `@iteotwawki/dkg-contestation`, the CLI
+  (`dkg-contest`), and the confidence kernel. The v0.2.0 roadmap items named in §6 (evidence
+  checker, `rebuildFromSWM()` warm-start, recursive rebuttal contestation) are tracked as issues.
+
+---
+
 ## Resolved decisions
 - **Repo home:** `github.com/iteotwawki/dkg-contestation` (Apache-2.0, npm `@iteotwawki/dkg-contestation`).
 - **Scope:** FLAGSHIP (8–10k TRAC) — §2's diversity/reputation depth earns the tier.
